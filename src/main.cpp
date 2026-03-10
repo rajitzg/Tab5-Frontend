@@ -36,13 +36,14 @@ struct TouchButton {
   }
 };
 
-TouchButton btnStart, btnSave, btnDiscard;
+TouchButton btnStart, btnSave, btnDiscard, btnNetwork;
 
 // --- Function Declarations ---
 bool sendPostRequest(const String& url);
 void fetchRosStatus();
 void drawUI();
 void drawStatus(const String& msg, uint16_t color);
+void connectToWiFi(const char* ssid, const char* password);
 
 void setup() {
   auto cfg = M5.config();
@@ -55,20 +56,20 @@ void setup() {
   int btnWidth = screenW - 40;
   int startX = 20;
   int startY = 80;
+
+  int networkBtnHeight = 100;
+  btnNetwork = {startX, startY, btnWidth, networkBtnHeight, TFT_DARKGREEN, "SWITCH NETWORK"};
   
   // Start button takes up most of the screen
-  int startBtnHeight = screenH - 280;
-  btnStart = {startX, startY, btnWidth, startBtnHeight, TFT_DARKGREEN, "START RECORDING"};
+  int startBtnHeight = screenH - 240;
+  btnStart = {startX, startY + networkBtnHeight + 20, btnWidth, startBtnHeight, TFT_DARKGREEN, "START RECORDING"};
   
   // When recording, we split the screen: a big save button, and a smaller discard button
   int saveBtnHeight = (int)(startBtnHeight * 0.7);
   int discardBtnHeight = startBtnHeight - saveBtnHeight - 20;
   
-  btnSave = {startX, startY, btnWidth, saveBtnHeight, TFT_MAROON, "STOP & SAVE"};
-  btnDiscard = {startX, startY + saveBtnHeight + 20, btnWidth, discardBtnHeight, TFT_DARKGREY, "STOP & DISCARD"};
-
-  int networkBtnHeight = screenH - 240;
-  btnNetwork = {startX, startY + networkBtnHeight + 20, btnWidth, networkBtnHeight, TFT_DARKGREEN, "SWITCH NETWORK"};
+  btnSave = {startX, startY + networkBtnHeight + 20, btnWidth, saveBtnHeight, TFT_MAROON, "STOP & SAVE"};
+  btnDiscard = {startX, startY + networkBtnHeight + 20 + saveBtnHeight + 20, btnWidth, discardBtnHeight, TFT_DARKGREY, "STOP & DISCARD"};
   
   M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setTextDatum(top_center);
@@ -99,18 +100,24 @@ void loop() {
   }
   
   // Check for touch events
-  if (M5.Touch.getCount() > 0) {
-    auto t = M5.Touch.getDetail();
-    
-    // Only trigger on touch release to prevent multiple triggers
-    if (t.wasReleased()) {
+  // Use isPressed() + static flag instead of wasPressed()/wasReleased():
+  // wasPressed/wasReleased are only true for ONE frame, so they get silently
+  // dropped if M5.update() is delayed (e.g. during HTTP calls).
+  // isPressed() is true for the entire touch duration, so it's never missed.
+  static bool touchHandled = false;
+  auto t = M5.Touch.getDetail();
+  if (t.isPressed()) {
+    if (!touchHandled) {
+      touchHandled = true;
       int tx = t.x;
       int ty = t.y;
-      
+
       if (btnNetwork.contains(tx, ty)) {
         if (WiFi.SSID() == WIFI1_SSID) {
+          drawStatus("Switching to: " + String(WIFI2_SSID) + "...", TFT_YELLOW);
           connectToWiFi(WIFI2_SSID, WIFI2_PASSWORD);
         } else {
+          drawStatus("Switching to: " + String(WIFI1_SSID) + "...", TFT_YELLOW);
           connectToWiFi(WIFI1_SSID, WIFI1_PASSWORD);
         }
       }
@@ -120,7 +127,7 @@ void loop() {
           isRecording = true;
           drawUI();
         }
-      } 
+      }
       else if (isRecording) {
         if (btnSave.contains(tx, ty)) {
           drawStatus("Sending STOP & SAVE command...", TFT_YELLOW);
@@ -137,10 +144,9 @@ void loop() {
           }
         }
       }
-      
-      // Small debounce delay
-      delay(200);
     }
+  } else {
+    touchHandled = false;  // finger lifted, allow next press
   }
   
   delay(10);
@@ -153,6 +159,7 @@ bool sendPostRequest(const String& url) {
   bool success = false;
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
+    http.setTimeout(3000);  // 3s timeout for command posts
     http.begin(url);
     
     // Post empty body
@@ -188,6 +195,8 @@ void fetchRosStatus() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
+  http.setConnectTimeout(500);  // 500ms TCP connect - unreachable hosts block here, not in setTimeout
+  http.setTimeout(1000);        // 1s response read timeout
   http.begin(URL_STATUS);
   int code = http.GET();
 
