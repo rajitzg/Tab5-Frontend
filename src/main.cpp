@@ -2,20 +2,19 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-
-// --- Configuration ---
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+#include "secrets.h"
 
 // The IP address of the robot companion computer running the FastAPI node
 // and the port it is running on (default 8000)
-const char* SERVER_IP = "192.168.1.100";  
+const char* SERVER_IP = "10.19.178.94";  
 const int SERVER_PORT = 8000;
+const unsigned long STATUS_INTERVAL_MS = 3000; // Poll every 3 seconds
 
 // --- API Endpoints ---
 const String URL_START = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/start";
 const String URL_SAVE = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/stop_and_save";
 const String URL_DISCARD = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/stop_and_discard";
+const String URL_STATUS = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/status";
 
 // --- UI Layout ---
 // The Tab5 has a massive 7-inch (1024x600) or similar high-res display, but we'll use auto coordinates
@@ -24,6 +23,7 @@ int screenW, screenH;
 
 // --- App State ---
 bool isRecording = false;
+unsigned long lastStatusCheck = 0;
 
 // Button structure for simple touch mapping
 struct TouchButton {
@@ -40,6 +40,7 @@ TouchButton btnStart, btnSave, btnDiscard;
 
 // --- Function Declarations ---
 bool sendPostRequest(const String& url);
+void fetchRosStatus();
 void drawUI();
 void drawStatus(const String& msg, uint16_t color);
 
@@ -56,7 +57,7 @@ void setup() {
   int startY = 80;
   
   // Start button takes up most of the screen
-  int startBtnHeight = screenH - 120;
+  int startBtnHeight = screenH - 280;
   btnStart = {startX, startY, btnWidth, startBtnHeight, TFT_DARKGREEN, "START RECORDING"};
   
   // When recording, we split the screen: a big save button, and a smaller discard button
@@ -65,6 +66,9 @@ void setup() {
   
   btnSave = {startX, startY, btnWidth, saveBtnHeight, TFT_MAROON, "STOP & SAVE"};
   btnDiscard = {startX, startY + saveBtnHeight + 20, btnWidth, discardBtnHeight, TFT_DARKGREY, "STOP & DISCARD"};
+
+  int networkBtnHeight = screenH - 240;
+  btnNetwork = {startX, startY + networkBtnHeight + 20, btnWidth, networkBtnHeight, TFT_DARKGREEN, "SWITCH NETWORK"};
   
   M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setTextDatum(top_center);
@@ -74,17 +78,11 @@ void setup() {
   
   // Connect to WiFi
   drawStatus("Connecting to WiFi...", TFT_YELLOW);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    drawStatus("WiFi Connected! IP: " + WiFi.localIP().toString(), TFT_CYAN);
-  } else {
-    drawStatus("WiFi Failed! Please check credentials.", TFT_RED);
+  connectToWiFi(WIFI1_SSID, WIFI1_PASSWORD);
+  if (WiFi.status() != WL_CONNECTED) {
+    drawStatus("Failed to connect to WiFi. Switching to backup...", TFT_RED);
+    delay(1000);
+    connectToWiFi(WIFI2_SSID, WIFI2_PASSWORD);
   }
   
   drawUI();
@@ -92,6 +90,13 @@ void setup() {
 
 void loop() {
   M5.update();
+
+  // Periodic status sync
+  unsigned long now = millis();
+  if (now - lastStatusCheck >= STATUS_INTERVAL_MS) {
+    lastStatusCheck = now;
+    fetchRosStatus();
+  }
   
   // Check for touch events
   if (M5.Touch.getCount() > 0) {
@@ -102,6 +107,13 @@ void loop() {
       int tx = t.x;
       int ty = t.y;
       
+      if (btnNetwork.contains(tx, ty)) {
+        if (WiFi.SSID() == WIFI1_SSID) {
+          connectToWiFi(WIFI2_SSID, WIFI2_PASSWORD);
+        } else {
+          connectToWiFi(WIFI1_SSID, WIFI1_PASSWORD);
+        }
+      }
       if (!isRecording && btnStart.contains(tx, ty)) {
         drawStatus("Sending START command...", TFT_YELLOW);
         if (sendPostRequest(URL_START)) {
@@ -172,6 +184,26 @@ bool sendPostRequest(const String& url) {
   return success;
 }
 
+void fetchRosStatus() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  http.begin(URL_STATUS);
+  int code = http.GET();
+
+  if (code == 200) {
+    String body = http.getString();
+    // Simple JSON parse: look for "true" or "false" in "is_recording"
+    bool newState = body.indexOf("\"is_recording\":true") >= 0;
+    if (newState != isRecording) {
+      isRecording = newState;
+      drawUI();  // Re-render buttons to match actual state
+    }
+  }
+  http.end();
+}
+
+
 void drawButton(TouchButton b) {
   M5.Display.fillRoundRect(b.x, b.y, b.w, b.h, 10, b.color);
   M5.Display.drawRoundRect(b.x, b.y, b.w, b.h, 10, TFT_WHITE);
@@ -186,6 +218,7 @@ void drawButton(TouchButton b) {
 void drawUI() {
   // Clear the button area
   M5.Display.fillRect(0, 80, screenW, screenH - 80, TFT_BLACK);
+  drawButton(btnNetwork);
   
   if (isRecording) {
     drawButton(btnSave);
@@ -202,4 +235,20 @@ void drawStatus(const String& msg, uint16_t color) {
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(color);
   M5.Display.drawString(msg, screenW/2, 45);
+}
+
+void connectToWiFi(const char* ssid, const char* password) {
+  Serial.println("Connecting to WiFi: " + String(ssid));
+  WiFi.begin(ssid, password);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    drawStatus("Connected to WiFi: " + WiFi.SSID() + "! IP: " + WiFi.localIP().toString(), TFT_CYAN);
+  } else {
+    drawStatus("WiFi Failed! Please check credentials.", TFT_RED);
+  }
 }
