@@ -2,7 +2,6 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <ESPmDNS.h>
 #include "secrets.h"
 
 // The robot companion computer is resolved by mDNS hostname (e.g. "robot" -> "robot.local")
@@ -45,7 +44,7 @@ void fetchRosStatus();
 void drawUI();
 void drawStatus(const String& msg, uint16_t color);
 void connectToWiFi(const char* ssid, const char* password);
-void resolveServerIP();
+void resolveServerIP(const char* ssid);
 
 void setup() {
   auto cfg = M5.config();
@@ -258,29 +257,29 @@ void connectToWiFi(const char* ssid, const char* password) {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    drawStatus("Connected! Resolving robot...", TFT_CYAN);
-    resolveServerIP();
+    drawStatus("Connected to WiFi: " + WiFi.SSID() + "! IP: " + WiFi.localIP().toString(), TFT_CYAN);
+    resolveServerIP(ssid);
   } else {
     drawStatus("WiFi Failed! Please check credentials.", TFT_RED);
   }
 }
 
-void resolveServerIP() {
-  // Resolve the robot's mDNS hostname to an IP on the current network.
-  // The hostname is defined in secrets.h as ROBOT_HOSTNAME (without .local).
-  IPAddress ip = MDNS.queryHost(ROBOT_HOSTNAME, 3000 /* ms timeout */);
-  if (ip != INADDR_NONE) {
-    SERVER_BASE = String("http://") + ip.toString() + ":" + SERVER_PORT;
+void resolveServerIP(const char* ssid) {
+  // Maybe switch to DNS eventually, but for now we'll use hardcoded IPs
+  String ip = "";
+  if (strcmp(ssid, WIFI1_SSID) == 0) {
+    ip = WIFI1_IP;
+  } else {
+    ip = WIFI2_IP;
+  }
+  if (ip != "") {
+    SERVER_BASE = String("http://") + ip + ":" + SERVER_PORT;
     URL_START   = SERVER_BASE + "/logger/start";
     URL_SAVE    = SERVER_BASE + "/logger/stop_and_save";
     URL_DISCARD = SERVER_BASE + "/logger/stop_and_discard";
     URL_STATUS  = SERVER_BASE + "/logger/status";
-    drawStatus("Robot @ " + ip.toString(), TFT_GREEN);
-    Serial.println("Robot resolved to: " + ip.toString());
   } else {
     SERVER_BASE = "";
     URL_START = URL_SAVE = URL_DISCARD = URL_STATUS = "";
-    drawStatus("Robot not found on this network!", TFT_RED);
-    Serial.println("mDNS resolution failed for: " + String(ROBOT_HOSTNAME));
   }
 }
