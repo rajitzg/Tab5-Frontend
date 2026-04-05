@@ -4,17 +4,17 @@
 #include <HTTPClient.h>
 #include "secrets.h"
 
-// The IP address of the robot companion computer running the FastAPI node
-// and the port it is running on (default 8000)
-const char* SERVER_IP = "10.19.178.94";  
+// The robot companion computer is resolved by mDNS hostname (e.g. "robot" -> "robot.local")
+// This way the IP can differ per network without any code changes.
 const int SERVER_PORT = 8000;
 const unsigned long STATUS_INTERVAL_MS = 3000; // Poll every 3 seconds
 
-// --- API Endpoints ---
-const String URL_START = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/start";
-const String URL_SAVE = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/stop_and_save";
-const String URL_DISCARD = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/stop_and_discard";
-const String URL_STATUS = String("http://") + SERVER_IP + ":" + SERVER_PORT + "/logger/status";
+// --- API Endpoints (rebuilt after mDNS resolution) ---
+String SERVER_BASE;
+String URL_START;
+String URL_SAVE;
+String URL_DISCARD;
+String URL_STATUS;
 
 // --- UI Layout ---
 // The Tab5 has a massive 7-inch (1024x600) or similar high-res display, but we'll use auto coordinates
@@ -44,6 +44,7 @@ void fetchRosStatus();
 void drawUI();
 void drawStatus(const String& msg, uint16_t color);
 void connectToWiFi(const char* ssid, const char* password);
+void resolveServerIP(const char* ssid);
 
 void setup() {
   auto cfg = M5.config();
@@ -257,7 +258,28 @@ void connectToWiFi(const char* ssid, const char* password) {
 
   if (WiFi.status() == WL_CONNECTED) {
     drawStatus("Connected to WiFi: " + WiFi.SSID() + "! IP: " + WiFi.localIP().toString(), TFT_CYAN);
+    resolveServerIP(ssid);
   } else {
     drawStatus("WiFi Failed! Please check credentials.", TFT_RED);
+  }
+}
+
+void resolveServerIP(const char* ssid) {
+  // Maybe switch to DNS eventually, but for now we'll use hardcoded IPs
+  String ip = "";
+  if (strcmp(ssid, WIFI1_SSID) == 0) {
+    ip = WIFI1_IP;
+  } else {
+    ip = WIFI2_IP;
+  }
+  if (ip != "") {
+    SERVER_BASE = String("http://") + ip + ":" + SERVER_PORT;
+    URL_START   = SERVER_BASE + "/logger/start";
+    URL_SAVE    = SERVER_BASE + "/logger/stop_and_save";
+    URL_DISCARD = SERVER_BASE + "/logger/stop_and_discard";
+    URL_STATUS  = SERVER_BASE + "/logger/status";
+  } else {
+    SERVER_BASE = "";
+    URL_START = URL_SAVE = URL_DISCARD = URL_STATUS = "";
   }
 }
