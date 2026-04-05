@@ -4,12 +4,9 @@
 #include <HTTPClient.h>
 #include "secrets.h"
 
-// The robot companion computer is resolved by mDNS hostname (e.g. "robot" -> "robot.local")
-// This way the IP can differ per network without any code changes.
 const int SERVER_PORT = 8000;
 const unsigned long STATUS_INTERVAL_MS = 3000; // Poll every 3 seconds
 
-// --- API Endpoints (rebuilt after mDNS resolution) ---
 String SERVER_BASE;
 String URL_START;
 String URL_SAVE;
